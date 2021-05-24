@@ -10,3 +10,5 @@ This project uses Mapbox to parse addresses into its components then passes into
 # Considerations
 To run the code you'll need an API key for both mapbox and placekey.  
 
+# How to run
+python main.py <csv_input> <output_csv> <Address_column_name> <Name_column_name>
