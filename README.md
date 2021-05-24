@@ -1,5 +1,7 @@
 # placekey_poc
-proof of concept for placekey api
+proof of concept for placekey api.
+
+Command line tool to clean addresses and get placekeys for all addresses in a CSV file.  
 
 # Placekey 
 placekey is like a universal foreign key for geospatial data.  it's a unique open standard identifier for addresses and points of interest
