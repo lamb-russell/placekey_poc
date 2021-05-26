@@ -2,17 +2,20 @@ import argparse
 import csv
 import logging
 import os
+from pathlib import Path
 
 from geopy.extra.rate_limiter import RateLimiter
 from geopy.geocoders import MapBox
 from placekey.api import PlacekeyAPI
+
+LINES_TO_FLUSH = 100
 
 ENV_VAR = "MAPBOX_API_TOKEN"
 
 PLACEKEY_ENV_VAR = "PLACEKEY_API_KEY"
 
 FORMAT = '%(asctime)-15s %(clientip)s %(user)-8s %(message)s'
-logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s;%(levelname)s;%(message)s', level=logging.INFO)
 
 
 def get_token():
@@ -57,7 +60,12 @@ class AddressNormalizer():
         :return: tuple of (clean address, placekey)
         """
         location = self.geocoder.geocode_address(address, one_result=True)
-        d = self.result_to_dict(location)
+        d=None
+        try:
+            d = self.result_to_dict(location)
+        except KeyError as k:
+            logging.error(f"Could not parse raw mapbox result. {location.raw} {k}")
+
         if point_of_interest_name:
             if not "location_name" in d:  # add point of interest name if doesn't exist
                 d["location_name"] = point_of_interest_name
@@ -67,7 +75,58 @@ class AddressNormalizer():
 
         pk = self.pk_api.lookup_placekey(**d)
 
+        # if we got an error from placekey, try again using a different parsing method
+        if "error" in pk:
+            logging.warning(f"Placekey not found for address {d} {pk} (1st attempt)")
+            d = self.parse_address(location)
+            pk = self.pk_api.lookup_placekey(**d)
+
+        if "error" in pk:
+            raise ValueError(f"Placekey not found for address {d} {pk} (2nd attempt)")
+
         return (location, pk["placekey"])  # placekey result has queryid and placekey properties
+
+    def parse_address(self, location):
+        """
+        parse adress into placekey input parameters
+         e.g. location_name, street_address, city, region, postal_code, iso_country_code, latitude, longitude
+        :param location: Location object result from geopy
+        :return: dictionary of placekey inputs
+        """
+        address= location.address
+        parts = address.split(", ")
+        parts = [x.upper().strip() for x in parts] # upper case and strip whitespace all parts
+        country = parts.pop()
+        region_zip = parts.pop()
+        city = parts.pop()
+        address = parts.pop()
+        location_name = ", ".join(parts)
+
+        # separate region from zip
+        region_parts = region_zip.split()
+        zipcode = region_parts.pop()
+        region = " ".join(region_parts)
+
+        #country code logic
+        if country == "United States".upper():  # todo: add other countries later
+            country_code = "us"
+        else:
+            raise ValueError("Could not map country code")
+
+
+        d = {
+            "street_address": address,
+            "region": region,
+            "postal_code": zipcode,
+            "location_name": location_name,
+            "city":city,
+            "iso_country_code":country_code,
+            "latitude": location.latitude,
+            "longitude" : location.longitude
+        }
+
+        return d
+
 
     def result_to_dict(self, result):
         """
@@ -79,14 +138,16 @@ class AddressNormalizer():
 
         # parse out country code, zip, state
         clean = result
+        # logging.info((clean.address,clean.raw))
         context = clean.raw["context"]
         result_text = clean.raw["text"]
 
         is_poi = len([y for y in clean.raw["place_type"] if y == "poi"]) > 0  # check if a poi result or address
         if is_poi:
-            address = clean.raw["properties"]["address"]
+            properties = clean.raw.get("properties")
+            address = properties.get("address")
         else:
-            address = clean.raw["address"]
+            address = clean.raw.get("address")
         city = next(iter([y["text"] for y in context if y["id"].startswith("place")]), None)
         region = next(iter([y["text"] for y in context if y["id"].startswith("region")]), None)
         postcode = next(iter([y["text"] for y in context if y["id"].startswith("postcode")]), None)
@@ -114,25 +175,38 @@ class AddressNormalizer():
         :param output_path:
         :return:
         """
+        try:
 
-        with open(csv_path, 'r') as f:
-            with open(output_path, "w") as o:
-                csv_dict_reader = csv.DictReader(f)
-                csv_dict_writer = csv.DictWriter(o, fieldnames=[location_name_column, address_column, "placekey"])
-                # iterate over each line as a ordered dictionary
-                for row in csv_dict_reader:
-                    # row variable is a dictionary that represents a row in csv
-                    # logging.info(row)
-                    address = row[address_column]  # get address
-                    location = row[location_name_column]  # get place name
-                    placekey = self.encode_placekey(address, location)  # get placekey and cleaned address
-                    logging.info((address, location, placekey))
+            with open(csv_path, 'r') as f:
+                with open(output_path, "w") as o:
+                    csv_dict_reader = csv.DictReader(f)
+                    csv_dict_writer = csv.DictWriter(o, fieldnames=[location_name_column, address_column, "placekey"])
+                    csv_dict_writer.writeheader()
 
-                    d = {x: row[x] for x in row}  # copy row dictionary
-                    d["placekey"] = placekey[1]  # add placekey to dictionary
-                    d[address_column] = placekey[0]  # overwrite address with normalized address
+                    # iterate over each line as a ordered dictionary
+                    for row in csv_dict_reader:
+                        # row variable is a dictionary that represents a row in csv
+                        # logging.info(row)
+                        address = row[address_column]  # get address
+                        location = row[location_name_column]  # get place name
+                        logging.info((address, location))
+                        placekey=None
+                        try:
+                            placekey = self.encode_placekey(address, location)  # get placekey and cleaned address
+                        except ValueError as v:
+                            logging.error(f"Error occurred fetching placekey for {address} | {location} | {v}")
 
-                    csv_dict_writer.writerow(d)  # write to file
+                        d = {x: row[x] for x in row}  # copy row dictionary
+                        if placekey:
+                            d["placekey"] = placekey[1]  # add placekey to dictionary
+                            d[address_column] = placekey[0]  # overwrite address with normalized address
+
+                        csv_dict_writer.writerow(d)  # write to file
+
+        except Exception as e:
+            logging.error(f"Error occurred writing to file {e}")
+            raise e
+
 
 
 class Geocoder():
@@ -184,4 +258,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     an = AddressNormalizer(get_token(), get_placekey_token())
+    output_absoute = Path(args.output).resolve()
+    input_path = Path(args.csv).resolve()
+    logging.info(f"Writing to {output_absoute} from {input_path} address: {args.address} location: {args.location}")
+
     an.encode_csv(args.csv, args.output, args.address, args.location)
