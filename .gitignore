@@ -5,3 +5,4 @@
 .idea/placekey_poc.iml
 .idea/workspace.xml
 .idea/vcs.xml
+*.pyc

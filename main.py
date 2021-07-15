@@ -2,8 +2,13 @@
 This program is intended to take a list of addresses for POI (points of interest), clean them up in mapbox,
 then generate a placekey for that POI.
 
+See for more info, placekey whitepaper here: https://docs.placekey.io/Placekey_Technical_White_Paper.pdf
+
+
 TODO: remove mapbox dependency (make optional)
+
 TODO: reduce number of calls to placekey api to streamline processing
+
 TODO: multi-thread?
 """
 import argparse
@@ -16,42 +21,33 @@ from geopy.extra.rate_limiter import RateLimiter
 from geopy.geocoders import MapBox
 from placekey.api import PlacekeyAPI
 
-LINES_TO_FLUSH = 100
+ENV_VAR = "MAPBOX_API_TOKEN"  # environment variable with mapbox api key
 
-ENV_VAR = "MAPBOX_API_TOKEN"
+PLACEKEY_ENV_VAR = "PLACEKEY_API_KEY"  # environment variable with placekey api key
 
-PLACEKEY_ENV_VAR = "PLACEKEY_API_KEY"
+logging.basicConfig(format='%(asctime)s;%(levelname)s;%(message)s', level=logging.INFO)  # logging config
 
-FORMAT = '%(asctime)-15s %(clientip)s %(user)-8s %(message)s'
-logging.basicConfig(format='%(asctime)s;%(levelname)s;%(message)s', level=logging.INFO)
-
-
-def get_token():
-    """
-    get api token from enviornment
-    :return: api token
-    """
-    api_key = os.environ.get(ENV_VAR)
-    if not api_key:
-        raise PermissionError(f"API key missing in environment variable {ENV_VAR}")
-        return None
-    return api_key
-
-
-def get_placekey_token():
-    """
-    get api token from enviornment
-    :return: api token
-    """
-    api_key = os.environ.get(PLACEKEY_ENV_VAR)
-    if not api_key:
-        raise PermissionError(f"API key missing in environment variable {PLACEKEY_ENV_VAR}")
-        return None
-    return api_key
 
 
 class AddressNormalizer():
+    """
+    This class contains methods for encoding a placekey given an address.  Optional arguments include a point of
+    interest name.
+
+    POI names are required to get granular results from the placekey api.  For example, a placekey for
+    a particular store at a particular address.  Otherwise the placekey will only include address information and h3
+    hex.  In some cases address or latitude / longitude is enough but poi placekeys contain the most information.
+
+    See this documentation on joining non-POI and POI placekeys.
+    https://www.placekey.io/tutorials/joining-poi-and-non-poi-datasets-with-placekey
+
+    """
     def __init__(self, mapbox_api_token, placekey_api_token):
+        """
+        initialize the mapbox and placekey api tokens
+        :param mapbox_api_token: mapbox api token
+        :param placekey_api_token: placekey api token
+        """
         self.geocoder = Geocoder(mapbox_api_token)
         self.pk_api = PlacekeyAPI(placekey_api_token)
 
@@ -222,7 +218,16 @@ class AddressNormalizer():
 
 
 class Geocoder():
+    """
+    this class encodes and normalizes an address using the mapbox geocoder api endpoint.
+
+    See mapbox geocoding documentation here: https://docs.mapbox.com/api/search/geocoding/
+    """
     def __init__(self, mapbox_api_token):
+        """
+        initialize the mapbox api token
+        :param mapbox_api_token: mapbox api token
+        """
         geolocator = MapBox(mapbox_api_token)
         geolocator.geocode = RateLimiter(geolocator.geocode, min_delay_seconds=0.2)
         self.geocode = geolocator.geocode
@@ -239,9 +244,15 @@ class Geocoder():
 
 
 class PlaceKeyFetcher():
+    """
+    this class conencts via the placekey api (only used for debugging)
+    """
     def __init__(self, api_key):
-        token = get_placekey_token()
-        self.pk_api = PlacekeyAPI(token)
+        """
+        initialize api key
+        :param api_key:
+        """
+        self.pk_api = PlacekeyAPI(api_key)
 
     def dict_to_placekey(self, place):
         """
@@ -255,6 +266,10 @@ class PlaceKeyFetcher():
 
 
 def get_arg_parser():
+    """
+    initialize command line argument parser.
+    :return:
+    """
     parser = argparse.ArgumentParser(description='process CSV file of addresses')
 
     parser.add_argument('csv', help='input CSV file path')
@@ -264,12 +279,36 @@ def get_arg_parser():
     return parser
 
 
+def get_mapbox_token():
+    """
+    get api token from enviornment
+    :return: api token
+    """
+    api_key = os.environ.get(ENV_VAR)
+    if not api_key:
+        raise PermissionError(f"API key missing in environment variable {ENV_VAR}")
+        return None
+    return api_key
+
+
+def get_placekey_token():
+    """
+    get api token from enviornment
+    :return: api token
+    """
+    api_key = os.environ.get(PLACEKEY_ENV_VAR)
+    if not api_key:
+        raise PermissionError(f"API key missing in environment variable {PLACEKEY_ENV_VAR}")
+        return None
+    return api_key
+
+
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     parser = get_arg_parser()
     args = parser.parse_args()
 
-    an = AddressNormalizer(get_token(), get_placekey_token())
+    an = AddressNormalizer(get_mapbox_token(), get_placekey_token())
     output_absoute = Path(args.output).resolve()
     input_path = Path(args.csv).resolve()
     logging.info(f"Writing to {output_absoute} from {input_path} address: {args.address} location: {args.location}")

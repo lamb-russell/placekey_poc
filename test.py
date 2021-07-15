@@ -2,14 +2,14 @@ import logging
 import os
 import unittest
 
-from main import AddressNormalizer, get_token, get_placekey_token
+from main import AddressNormalizer, get_mapbox_token, get_placekey_token
 
 logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.INFO)
 
 
 class TestAddressEncoder(unittest.TestCase):
     def setUp(self):
-        self.g = AddressNormalizer(get_token(), get_placekey_token())
+        self.g = AddressNormalizer(get_mapbox_token(), get_placekey_token())
 
     def test_poi(self):
         raw_poi = "ShopRite of Stirling, 1153 Valley Rd, Long Hill, New Jersey 07980, United States"
