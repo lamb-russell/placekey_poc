@@ -1,3 +1,11 @@
+"""
+This program is intended to take a list of addresses for POI (points of interest), clean them up in mapbox,
+then generate a placekey for that POI.
+
+TODO: remove mapbox dependency (make optional)
+TODO: reduce number of calls to placekey api to streamline processing
+TODO: multi-thread?
+"""
 import argparse
 import csv
 import logging
@@ -102,6 +110,7 @@ class AddressNormalizer():
         address = parts.pop()
         location_name = ", ".join(parts)
 
+
         # separate region from zip
         region_parts = region_zip.split()
         zipcode = region_parts.pop()
@@ -124,6 +133,9 @@ class AddressNormalizer():
             "latitude": location.latitude,
             "longitude" : location.longitude
         }
+
+        if len(location_name.strip())<1: # remove location name if it's empty
+            d.pop("location_name",None)
 
         return d
 
